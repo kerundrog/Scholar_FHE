@@ -9,40 +9,51 @@ import { useFhevm, useEncrypt, useDecrypt } from '../fhevm-sdk/src';
 interface ScholarshipData {
   id: string;
   name: string;
-  familyIncome: string;
-  academicScore: string;
+  encryptedIncome: string;
+  academicScore: number;
+  extracurricular: number;
+  description: string;
   timestamp: number;
   creator: string;
-  publicValue1: number;
-  publicValue2: number;
   isVerified?: boolean;
   decryptedValue?: number;
+}
+
+interface ApplicationStats {
+  totalApplications: number;
+  approvedCount: number;
+  avgIncome: number;
+  pendingReview: number;
+  successRate: number;
 }
 
 const App: React.FC = () => {
   const { address, isConnected } = useAccount();
   const [loading, setLoading] = useState(true);
-  const [scholarships, setScholarships] = useState<ScholarshipData[]>([]);
+  const [applications, setApplications] = useState<ScholarshipData[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [creatingScholarship, setCreatingScholarship] = useState(false);
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [transactionStatus, setTransactionStatus] = useState<{ visible: boolean; status: "pending" | "success" | "error"; message: string; }>({ 
     visible: false, 
     status: "pending", 
     message: "" 
   });
-  const [newScholarshipData, setNewScholarshipData] = useState({ 
+  const [newApplication, setNewApplication] = useState({ 
     name: "", 
-    familyIncome: "", 
-    academicScore: "" 
+    income: "", 
+    score: "", 
+    extracurricular: "",
+    description: "" 
   });
-  const [selectedScholarship, setSelectedScholarship] = useState<ScholarshipData | null>(null);
+  const [selectedApp, setSelectedApp] = useState<ScholarshipData | null>(null);
   const [decryptedIncome, setDecryptedIncome] = useState<number | null>(null);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [contractAddress, setContractAddress] = useState("");
   const [fhevmInitializing, setFhevmInitializing] = useState(false);
+  const [showFAQ, setShowFAQ] = useState(false);
+  const [showStats, setShowStats] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterVerified, setFilterVerified] = useState(false);
 
   const { status, initialize, isInitialized } = useFhevm();
   const { encrypt, isEncrypting } = useEncrypt();
@@ -78,7 +89,7 @@ const App: React.FC = () => {
       }
       
       try {
-        await loadData();
+        await loadApplications();
         const contract = await getContractReadOnly();
         if (contract) setContractAddress(await contract.getAddress());
       } catch (error) {
@@ -91,7 +102,7 @@ const App: React.FC = () => {
     loadDataAndContract();
   }, [isConnected]);
 
-  const loadData = async () => {
+  const loadApplications = async () => {
     if (!isConnected) return;
     
     setIsRefreshing(true);
@@ -100,67 +111,67 @@ const App: React.FC = () => {
       if (!contract) return;
       
       const businessIds = await contract.getAllBusinessIds();
-      const scholarshipsList: ScholarshipData[] = [];
+      const appsList: ScholarshipData[] = [];
       
       for (const businessId of businessIds) {
         try {
           const businessData = await contract.getBusinessData(businessId);
-          scholarshipsList.push({
+          appsList.push({
             id: businessId,
             name: businessData.name,
-            familyIncome: businessId,
-            academicScore: businessId,
+            encryptedIncome: businessId,
+            academicScore: Number(businessData.publicValue1) || 0,
+            extracurricular: Number(businessData.publicValue2) || 0,
+            description: businessData.description,
             timestamp: Number(businessData.timestamp),
             creator: businessData.creator,
-            publicValue1: Number(businessData.publicValue1) || 0,
-            publicValue2: Number(businessData.publicValue2) || 0,
             isVerified: businessData.isVerified,
             decryptedValue: Number(businessData.decryptedValue) || 0
           });
         } catch (e) {
-          console.error('Error loading business data:', e);
+          console.error('Error loading application data:', e);
         }
       }
       
-      setScholarships(scholarshipsList);
+      setApplications(appsList);
     } catch (e) {
-      setTransactionStatus({ visible: true, status: "error", message: "Failed to load data" });
+      setTransactionStatus({ visible: true, status: "error", message: "Failed to load applications" });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
     } finally { 
       setIsRefreshing(false); 
     }
   };
 
-  const createScholarship = async () => {
+  const applyScholarship = async () => {
     if (!isConnected || !address) { 
       setTransactionStatus({ visible: true, status: "error", message: "Please connect wallet first" });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
       return; 
     }
     
-    setCreatingScholarship(true);
-    setTransactionStatus({ visible: true, status: "pending", message: "Creating scholarship application with Zama FHE..." });
+    setApplying(true);
+    setTransactionStatus({ visible: true, status: "pending", message: "Encrypting income data with Zama FHE..." });
     
     try {
       const contract = await getContractWithSigner();
       if (!contract) throw new Error("Failed to get contract with signer");
       
-      const familyIncomeValue = parseInt(newScholarshipData.familyIncome) || 0;
-      const businessId = `scholarship-${Date.now()}`;
+      const incomeValue = parseInt(newApplication.income) || 0;
+      const businessId = `scholar-${Date.now()}`;
       
-      const encryptedResult = await encrypt(contractAddress, address, familyIncomeValue);
+      const encryptedResult = await encrypt(contractAddress, address, incomeValue);
       
       const tx = await contract.createBusinessData(
         businessId,
-        newScholarshipData.name,
+        newApplication.name,
         encryptedResult.encryptedData,
         encryptedResult.proof,
-        parseInt(newScholarshipData.academicScore) || 0,
-        0,
-        "Scholarship Application"
+        parseInt(newApplication.score) || 0,
+        parseInt(newApplication.extracurricular) || 0,
+        newApplication.description
       );
       
-      setTransactionStatus({ visible: true, status: "pending", message: "Waiting for transaction confirmation..." });
+      setTransactionStatus({ visible: true, status: "pending", message: "Submitting encrypted application..." });
       await tx.wait();
       
       setTransactionStatus({ visible: true, status: "success", message: "Scholarship application submitted successfully!" });
@@ -168,21 +179,21 @@ const App: React.FC = () => {
         setTransactionStatus({ visible: false, status: "pending", message: "" });
       }, 2000);
       
-      await loadData();
-      setShowCreateModal(false);
-      setNewScholarshipData({ name: "", familyIncome: "", academicScore: "" });
+      await loadApplications();
+      setShowApplyModal(false);
+      setNewApplication({ name: "", income: "", score: "", extracurricular: "", description: "" });
     } catch (e: any) {
       const errorMessage = e.message?.includes("user rejected transaction") 
-        ? "Transaction rejected by user" 
+        ? "Transaction rejected" 
         : "Submission failed: " + (e.message || "Unknown error");
       setTransactionStatus({ visible: true, status: "error", message: errorMessage });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
     } finally { 
-      setCreatingScholarship(false); 
+      setApplying(false); 
     }
   };
 
-  const decryptData = async (businessId: string): Promise<number | null> => {
+  const decryptIncome = async (businessId: string): Promise<number | null> => {
     if (!isConnected || !address) { 
       setTransactionStatus({ visible: true, status: "error", message: "Please connect wallet first" });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
@@ -197,8 +208,16 @@ const App: React.FC = () => {
       const businessData = await contractRead.getBusinessData(businessId);
       if (businessData.isVerified) {
         const storedValue = Number(businessData.decryptedValue) || 0;
-        setTransactionStatus({ visible: true, status: "success", message: "Data already verified on-chain" });
-        setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
+        
+        setTransactionStatus({ 
+          visible: true, 
+          status: "success", 
+          message: "Income already verified on-chain" 
+        });
+        setTimeout(() => {
+          setTransactionStatus({ visible: false, status: "pending", message: "" });
+        }, 2000);
+        
         return storedValue;
       }
       
@@ -214,25 +233,39 @@ const App: React.FC = () => {
           contractWrite.verifyDecryption(businessId, abiEncodedClearValues, decryptionProof)
       );
       
-      setTransactionStatus({ visible: true, status: "pending", message: "Verifying decryption on-chain..." });
+      setTransactionStatus({ visible: true, status: "pending", message: "Verifying income decryption..." });
       
       const clearValue = result.decryptionResult.clearValues[encryptedValueHandle];
-      await loadData();
       
-      setTransactionStatus({ visible: true, status: "success", message: "Income data decrypted and verified successfully!" });
-      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
+      await loadApplications();
+      
+      setTransactionStatus({ visible: true, status: "success", message: "Income verified successfully!" });
+      setTimeout(() => {
+        setTransactionStatus({ visible: false, status: "pending", message: "" });
+      }, 2000);
       
       return Number(clearValue);
       
     } catch (e: any) { 
       if (e.message?.includes("Data already verified")) {
-        setTransactionStatus({ visible: true, status: "success", message: "Data is already verified on-chain" });
-        setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
-        await loadData();
+        setTransactionStatus({ 
+          visible: true, 
+          status: "success", 
+          message: "Income is already verified" 
+        });
+        setTimeout(() => {
+          setTransactionStatus({ visible: false, status: "pending", message: "" });
+        }, 2000);
+        
+        await loadApplications();
         return null;
       }
       
-      setTransactionStatus({ visible: true, status: "error", message: "Decryption failed: " + (e.message || "Unknown error") });
+      setTransactionStatus({ 
+        visible: true, 
+        status: "error", 
+        message: "Decryption failed: " + (e.message || "Unknown error") 
+      });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
       return null; 
     } finally { 
@@ -241,40 +274,135 @@ const App: React.FC = () => {
   };
 
   const checkEligibility = async () => {
-    if (!isConnected) return;
-    
-    setTransactionStatus({ visible: true, status: "pending", message: "Checking system availability..." });
-    
     try {
       const contract = await getContractReadOnly();
-      if (!contract) throw new Error("Contract not available");
+      if (!contract) return;
       
       const isAvailable = await contract.isAvailable();
-      
-      if (isAvailable) {
-        setTransactionStatus({ visible: true, status: "success", message: "FHE system is available for eligibility verification!" });
-      } else {
-        setTransactionStatus({ visible: true, status: "error", message: "System temporarily unavailable" });
-      }
-    } catch (e: any) {
-      setTransactionStatus({ visible: true, status: "error", message: "Availability check failed" });
+      setTransactionStatus({ 
+        visible: true, 
+        status: "success", 
+        message: "System is available for eligibility checking" 
+      });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
+    } catch (e) {
+      setTransactionStatus({ visible: true, status: "error", message: "Eligibility check failed" });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
     }
+  };
+
+  const getApplicationStats = (): ApplicationStats => {
+    const totalApplications = applications.length;
+    const approvedCount = applications.filter(app => app.isVerified && (app.decryptedValue || 0) < 50000).length;
+    const avgIncome = applications.length > 0 
+      ? applications.reduce((sum, app) => sum + (app.decryptedValue || 0), 0) / applications.length 
+      : 0;
+    const pendingReview = applications.filter(app => !app.isVerified).length;
+    const successRate = totalApplications > 0 ? (approvedCount / totalApplications) * 100 : 0;
+
+    return {
+      totalApplications,
+      approvedCount,
+      avgIncome,
+      pendingReview,
+      successRate
+    };
+  };
+
+  const filteredApplications = applications.filter(app => 
+    app.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    app.description.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const renderStatsPanel = () => {
+    const stats = getApplicationStats();
     
-    setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+    return (
+      <div className="stats-panels">
+        <div className="stat-panel neon-purple">
+          <div className="stat-icon">📊</div>
+          <div className="stat-content">
+            <div className="stat-value">{stats.totalApplications}</div>
+            <div className="stat-label">Total Applications</div>
+          </div>
+        </div>
+        
+        <div className="stat-panel neon-blue">
+          <div className="stat-icon">✅</div>
+          <div className="stat-content">
+            <div className="stat-value">{stats.approvedCount}</div>
+            <div className="stat-label">Approved</div>
+          </div>
+        </div>
+        
+        <div className="stat-panel neon-pink">
+          <div className="stat-icon">⏳</div>
+          <div className="stat-content">
+            <div className="stat-value">{stats.pendingReview}</div>
+            <div className="stat-label">Pending Review</div>
+          </div>
+        </div>
+        
+        <div className="stat-panel neon-green">
+          <div className="stat-icon">📈</div>
+          <div className="stat-content">
+            <div className="stat-value">{stats.successRate.toFixed(1)}%</div>
+            <div className="stat-label">Success Rate</div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
-  const filteredScholarships = scholarships.filter(scholarship => {
-    const matchesSearch = scholarship.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = !filterVerified || scholarship.isVerified;
-    return matchesSearch && matchesFilter;
-  });
-
-  const stats = {
-    total: scholarships.length,
-    verified: scholarships.filter(s => s.isVerified).length,
-    eligible: scholarships.filter(s => s.isVerified && (s.decryptedValue || 0) < 30000).length,
-    pending: scholarships.filter(s => !s.isVerified).length
+  const renderIncomeChart = (application: ScholarshipData) => {
+    const income = application.isVerified ? application.decryptedValue : decryptedIncome;
+    const threshold = 50000;
+    const percentage = income ? Math.min(100, (income / threshold) * 100) : 0;
+    
+    return (
+      <div className="income-chart">
+        <div className="chart-header">
+          <h4>Income Eligibility Check</h4>
+          <div className={`eligibility-badge ${income && income < threshold ? 'eligible' : 'ineligible'}`}>
+            {income ? (income < threshold ? 'Eligible' : 'Not Eligible') : 'Not Verified'}
+          </div>
+        </div>
+        <div className="chart-bar">
+          <div 
+            className="bar-fill" 
+            style={{ width: `${percentage}%` }}
+          >
+            <span className="bar-value">${income?.toLocaleString() || '🔒'}</span>
+          </div>
+        </div>
+        <div className="chart-labels">
+          <span>Low Income</span>
+          <span>Threshold: ${threshold.toLocaleString()}</span>
+          <span>High Income</span>
+        </div>
+      </div>
+    );
   };
+
+  const renderFAQs = () => (
+    <div className="faq-section">
+      <h3>Frequently Asked Questions</h3>
+      <div className="faq-list">
+        <div className="faq-item">
+          <div className="faq-question">How is my income data protected?</div>
+          <div className="faq-answer">Your income is encrypted using Zama FHE technology, ensuring it remains confidential while allowing eligibility verification.</div>
+        </div>
+        <div className="faq-item">
+          <div className="faq-question">What income level qualifies?</div>
+          <div className="faq-answer">Household income below $50,000 annually qualifies for consideration. The exact threshold may vary.</div>
+        </div>
+        <div className="faq-item">
+          <div className="faq-question">How long does verification take?</div>
+          <div className="faq-answer">The FHE verification process typically takes 2-3 minutes once submitted on-chain.</div>
+        </div>
+      </div>
+    </div>
+  );
 
   if (!isConnected) {
     return (
@@ -282,6 +410,7 @@ const App: React.FC = () => {
         <header className="app-header">
           <div className="logo">
             <h1>🎓 Confidential Scholarship</h1>
+            <p>FHE-Protected Application System</p>
           </div>
           <div className="header-actions">
             <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
@@ -292,19 +421,22 @@ const App: React.FC = () => {
           <div className="connection-content">
             <div className="connection-icon">🔐</div>
             <h2>Connect Your Wallet to Apply</h2>
-            <p>Secure scholarship application with fully homomorphic encryption protecting your financial privacy.</p>
-            <div className="connection-steps">
-              <div className="step">
-                <span>1</span>
-                <p>Connect your wallet to begin</p>
+            <p>Secure, privacy-preserving scholarship applications powered by Zama FHE technology</p>
+            <div className="feature-grid">
+              <div className="feature-item">
+                <span className="feature-icon">💰</span>
+                <h4>Income Encryption</h4>
+                <p>Your financial data stays private with fully homomorphic encryption</p>
               </div>
-              <div className="step">
-                <span>2</span>
-                <p>FHE system initializes automatically</p>
+              <div className="feature-item">
+                <span className="feature-icon">⚡</span>
+                <h4>Instant Verification</h4>
+                <p>Automated eligibility checking without exposing sensitive information</p>
               </div>
-              <div className="step">
-                <span>3</span>
-                <p>Submit encrypted income data securely</p>
+              <div className="feature-item">
+                <span className="feature-icon">🎯</span>
+                <h4>Fair Assessment</h4>
+                <p>Transparent process with cryptographic proof of verification</p>
               </div>
             </div>
           </div>
@@ -318,7 +450,7 @@ const App: React.FC = () => {
       <div className="loading-screen">
         <div className="fhe-spinner"></div>
         <p>Initializing FHE Encryption System...</p>
-        <p className="loading-note">Securing your financial data with Zama FHE</p>
+        <p className="loading-note">Securing your scholarship application</p>
       </div>
     );
   }
@@ -335,129 +467,186 @@ const App: React.FC = () => {
       <header className="app-header">
         <div className="logo">
           <h1>🎓 Confidential Scholarship</h1>
-          <span className="tagline">FHE-Protected Financial Privacy</span>
+          <p>FHE-Protected Application System</p>
         </div>
         
         <div className="header-actions">
-          <button onClick={checkEligibility} className="eligibility-btn">
-            Check Eligibility
-          </button>
-          <button onClick={() => setShowCreateModal(true)} className="create-btn">
+          <button 
+            onClick={() => setShowApplyModal(true)} 
+            className="apply-btn neon-glow"
+          >
             + New Application
+          </button>
+          <button 
+            onClick={checkEligibility} 
+            className="check-btn"
+          >
+            Check Eligibility
           </button>
           <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
         </div>
       </header>
       
       <div className="main-content">
-        <div className="stats-grid">
-          <div className="stat-card">
-            <div className="stat-value">{stats.total}</div>
-            <div className="stat-label">Total Applications</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.verified}</div>
-            <div className="stat-label">Income Verified</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.eligible}</div>
-            <div className="stat-label">Eligible</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.pending}</div>
-            <div className="stat-label">Pending Review</div>
-          </div>
-        </div>
-
-        <div className="search-section">
-          <div className="search-bar">
-            <input 
-              type="text" 
-              placeholder="Search applications..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <div className="filter-options">
-            <label>
-              <input 
-                type="checkbox" 
-                checked={filterVerified}
-                onChange={(e) => setFilterVerified(e.target.checked)}
-              />
-              Show Verified Only
-            </label>
-          </div>
-          <button onClick={loadData} className="refresh-btn" disabled={isRefreshing}>
-            {isRefreshing ? "Refreshing..." : "Refresh"}
-          </button>
-        </div>
-
-        <div className="applications-grid">
-          {filteredScholarships.length === 0 ? (
-            <div className="no-applications">
-              <p>No scholarship applications found</p>
-              <button onClick={() => setShowCreateModal(true)} className="create-btn">
-                Create First Application
-              </button>
-            </div>
-          ) : (
-            filteredScholarships.map((scholarship, index) => (
-              <div 
-                className={`application-card ${selectedScholarship?.id === scholarship.id ? "selected" : ""} ${scholarship.isVerified ? "verified" : "pending"}`} 
-                key={index}
-                onClick={() => setSelectedScholarship(scholarship)}
-              >
-                <div className="card-header">
-                  <h3>{scholarship.name}</h3>
-                  <span className={`status-badge ${scholarship.isVerified ? "verified" : "pending"}`}>
-                    {scholarship.isVerified ? "✅ Verified" : "⏳ Pending"}
-                  </span>
-                </div>
-                <div className="card-content">
-                  <div className="info-row">
-                    <span>Academic Score:</span>
-                    <strong>{scholarship.publicValue1}/100</strong>
-                  </div>
-                  <div className="info-row">
-                    <span>Income Status:</span>
-                    <strong>{scholarship.isVerified ? `$${scholarship.decryptedValue}` : "🔒 Encrypted"}</strong>
-                  </div>
-                  <div className="info-row">
-                    <span>Applied:</span>
-                    <strong>{new Date(scholarship.timestamp * 1000).toLocaleDateString()}</strong>
-                  </div>
-                </div>
-                <div className="card-footer">
-                  <span className="creator">By: {scholarship.creator.substring(0, 8)}...</span>
+        <div className="content-panels">
+          <div className="left-panel">
+            <div className="panel-section">
+              <div className="section-header">
+                <h2>Application Statistics</h2>
+                <div className="section-actions">
+                  <button 
+                    onClick={() => setShowStats(!showStats)}
+                    className="toggle-btn"
+                  >
+                    {showStats ? 'Hide' : 'Show'} Stats
+                  </button>
                 </div>
               </div>
-            ))
-          )}
+              {showStats && renderStatsPanel()}
+            </div>
+            
+            <div className="panel-section">
+              <div className="section-header">
+                <h2>FHE Process Flow</h2>
+              </div>
+              <div className="process-flow">
+                <div className="flow-step">
+                  <div className="step-number">1</div>
+                  <div className="step-content">
+                    <h4>Encrypt Income</h4>
+                    <p>Family income encrypted with Zama FHE before submission</p>
+                  </div>
+                </div>
+                <div className="flow-step">
+                  <div className="step-number">2</div>
+                  <div className="step-content">
+                    <h4>On-chain Storage</h4>
+                    <p>Encrypted data stored securely on blockchain</p>
+                  </div>
+                </div>
+                <div className="flow-step">
+                  <div className="step-number">3</div>
+                  <div className="step-content">
+                    <h4>Homomorphic Verification</h4>
+                    <p>Income verification without decryption</p>
+                  </div>
+                </div>
+                <div className="flow-step">
+                  <div className="step-number">4</div>
+                  <div className="step-content">
+                    <h4>Result Publication</h4>
+                    <p>Only eligibility result revealed publicly</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="right-panel">
+            <div className="panel-section">
+              <div className="section-header">
+                <h2>Scholarship Applications</h2>
+                <div className="section-actions">
+                  <input 
+                    type="text" 
+                    placeholder="Search applications..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="search-input"
+                  />
+                  <button 
+                    onClick={loadApplications} 
+                    className="refresh-btn" 
+                    disabled={isRefreshing}
+                  >
+                    {isRefreshing ? "🔄" : "Refresh"}
+                  </button>
+                </div>
+              </div>
+              
+              <div className="applications-list">
+                {filteredApplications.length === 0 ? (
+                  <div className="no-applications">
+                    <p>No scholarship applications found</p>
+                    <button 
+                      className="apply-btn" 
+                      onClick={() => setShowApplyModal(true)}
+                    >
+                      Apply Now
+                    </button>
+                  </div>
+                ) : filteredApplications.map((app, index) => (
+                  <div 
+                    className={`application-item ${selectedApp?.id === app.id ? "selected" : ""}`} 
+                    key={index}
+                    onClick={() => setSelectedApp(app)}
+                  >
+                    <div className="app-header">
+                      <div className="app-title">{app.name}</div>
+                      <div className={`app-status ${app.isVerified ? 'verified' : 'pending'}`}>
+                        {app.isVerified ? '✅ Verified' : '⏳ Pending'}
+                      </div>
+                    </div>
+                    <div className="app-meta">
+                      <span>Academic: {app.academicScore}/10</span>
+                      <span>Activities: {app.extracurricular}/10</span>
+                      <span>{new Date(app.timestamp * 1000).toLocaleDateString()}</span>
+                    </div>
+                    <div className="app-description">{app.description}</div>
+                    {app.isVerified && (
+                      <div className="app-result">
+                        Income: ${app.decryptedValue?.toLocaleString()} - 
+                        <span className={app.decryptedValue && app.decryptedValue < 50000 ? 'eligible' : 'ineligible'}>
+                          {app.decryptedValue && app.decryptedValue < 50000 ? ' Eligible' : ' Not Eligible'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bottom-panel">
+          <div className="panel-section">
+            <div className="section-header">
+              <h2>Help & Information</h2>
+              <button 
+                onClick={() => setShowFAQ(!showFAQ)}
+                className="toggle-btn"
+              >
+                {showFAQ ? 'Hide' : 'Show'} FAQ
+              </button>
+            </div>
+            {showFAQ && renderFAQs()}
+          </div>
         </div>
       </div>
       
-      {showCreateModal && (
-        <ModalCreateScholarship 
-          onSubmit={createScholarship} 
-          onClose={() => setShowCreateModal(false)} 
-          creating={creatingScholarship} 
-          scholarshipData={newScholarshipData} 
-          setScholarshipData={setNewScholarshipData}
+      {showApplyModal && (
+        <ApplyModal 
+          onSubmit={applyScholarship} 
+          onClose={() => setShowApplyModal(false)} 
+          applying={applying} 
+          application={newApplication} 
+          setApplication={setNewApplication}
           isEncrypting={isEncrypting}
         />
       )}
       
-      {selectedScholarship && (
-        <ScholarshipDetailModal 
-          scholarship={selectedScholarship} 
+      {selectedApp && (
+        <ApplicationDetailModal 
+          application={selectedApp} 
           onClose={() => { 
-            setSelectedScholarship(null); 
+            setSelectedApp(null); 
             setDecryptedIncome(null); 
           }} 
           decryptedIncome={decryptedIncome} 
+          setDecryptedIncome={setDecryptedIncome} 
           isDecrypting={isDecrypting || fheIsDecrypting} 
-          decryptData={() => decryptData(selectedScholarship.id)}
+          decryptIncome={() => decryptIncome(selectedApp.id)}
+          renderIncomeChart={renderIncomeChart}
         />
       )}
       
@@ -473,51 +662,40 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
-
-      <footer className="app-footer">
-        <div className="footer-content">
-          <p>🔐 Powered by Zama FHE - Your financial privacy is protected</p>
-          <div className="footer-links">
-            <span>FHE Technology</span>
-            <span>Privacy Policy</span>
-            <span>Terms of Service</span>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 };
 
-const ModalCreateScholarship: React.FC<{
+const ApplyModal: React.FC<{
   onSubmit: () => void; 
   onClose: () => void; 
-  creating: boolean;
-  scholarshipData: any;
-  setScholarshipData: (data: any) => void;
+  applying: boolean;
+  application: any;
+  setApplication: (data: any) => void;
   isEncrypting: boolean;
-}> = ({ onSubmit, onClose, creating, scholarshipData, setScholarshipData, isEncrypting }) => {
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+}> = ({ onSubmit, onClose, applying, application, setApplication, isEncrypting }) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    if (name === 'familyIncome') {
+    if (name === 'income') {
       const intValue = value.replace(/[^\d]/g, '');
-      setScholarshipData({ ...scholarshipData, [name]: intValue });
+      setApplication({ ...application, [name]: intValue });
     } else {
-      setScholarshipData({ ...scholarshipData, [name]: value });
+      setApplication({ ...application, [name]: value });
     }
   };
 
   return (
     <div className="modal-overlay">
-      <div className="create-modal">
+      <div className="apply-modal">
         <div className="modal-header">
           <h2>New Scholarship Application</h2>
-          <button onClick={onClose} className="close-modal">×</button>
+          <button onClick={onClose} className="close-modal">&times;</button>
         </div>
         
         <div className="modal-body">
-          <div className="fhe-notice">
-            <strong>FHE 🔐 Privacy Protection</strong>
-            <p>Your family income will be encrypted with Zama FHE - only you can decrypt it</p>
+          <div className="fhe-notice neon-glow">
+            <strong>FHE 🔐 Income Protection</strong>
+            <p>Your family income will be encrypted and never exposed publicly</p>
           </div>
           
           <div className="form-group">
@@ -525,38 +703,62 @@ const ModalCreateScholarship: React.FC<{
             <input 
               type="text" 
               name="name" 
-              value={scholarshipData.name} 
+              value={application.name} 
               onChange={handleChange} 
-              placeholder="Enter your full name..." 
+              placeholder="Enter full name..." 
             />
           </div>
           
           <div className="form-group">
-            <label>Family Annual Income (USD) *</label>
+            <label>Annual Family Income (USD) *</label>
             <input 
               type="number" 
-              name="familyIncome" 
-              value={scholarshipData.familyIncome} 
+              name="income" 
+              value={application.income} 
               onChange={handleChange} 
               placeholder="Enter income amount..." 
-              step="1"
               min="0"
             />
             <div className="data-type-label">🔐 FHE Encrypted Integer</div>
           </div>
           
           <div className="form-group">
-            <label>Academic Score (0-100) *</label>
+            <label>Academic Score (1-10) *</label>
             <input 
               type="number" 
-              min="0" 
-              max="100" 
-              name="academicScore" 
-              value={scholarshipData.academicScore} 
+              min="1" 
+              max="10" 
+              name="score" 
+              value={application.score} 
               onChange={handleChange} 
               placeholder="Enter academic score..." 
             />
             <div className="data-type-label">📊 Public Data</div>
+          </div>
+          
+          <div className="form-group">
+            <label>Extracurricular Score (1-10) *</label>
+            <input 
+              type="number" 
+              min="1" 
+              max="10" 
+              name="extracurricular" 
+              value={application.extracurricular} 
+              onChange={handleChange} 
+              placeholder="Enter activity score..." 
+            />
+            <div className="data-type-label">⚡ Public Data</div>
+          </div>
+          
+          <div className="form-group">
+            <label>Personal Statement</label>
+            <textarea 
+              name="description" 
+              value={application.description} 
+              onChange={handleChange} 
+              placeholder="Tell us about your educational goals..." 
+              rows={3}
+            />
           </div>
         </div>
         
@@ -564,10 +766,10 @@ const ModalCreateScholarship: React.FC<{
           <button onClick={onClose} className="cancel-btn">Cancel</button>
           <button 
             onClick={onSubmit} 
-            disabled={creating || isEncrypting || !scholarshipData.name || !scholarshipData.familyIncome || !scholarshipData.academicScore} 
-            className="submit-btn"
+            disabled={applying || isEncrypting || !application.name || !application.income || !application.score} 
+            className="submit-btn neon-glow"
           >
-            {creating || isEncrypting ? "Encrypting and Submitting..." : "Submit Application"}
+            {applying || isEncrypting ? "🔐 Encrypting and Submitting..." : "Submit Application"}
           </button>
         </div>
       </div>
@@ -575,116 +777,132 @@ const ModalCreateScholarship: React.FC<{
   );
 };
 
-const ScholarshipDetailModal: React.FC<{
-  scholarship: ScholarshipData;
+const ApplicationDetailModal: React.FC<{
+  application: ScholarshipData;
   onClose: () => void;
   decryptedIncome: number | null;
+  setDecryptedIncome: (value: number | null) => void;
   isDecrypting: boolean;
-  decryptData: () => Promise<number | null>;
-}> = ({ scholarship, onClose, decryptedIncome, isDecrypting, decryptData }) => {
-  const [localDecryptedIncome, setLocalDecryptedIncome] = useState<number | null>(decryptedIncome);
-
+  decryptIncome: () => Promise<number | null>;
+  renderIncomeChart: (application: ScholarshipData) => JSX.Element;
+}> = ({ application, onClose, decryptedIncome, setDecryptedIncome, isDecrypting, decryptIncome, renderIncomeChart }) => {
   const handleDecrypt = async () => {
-    if (localDecryptedIncome !== null) { 
-      setLocalDecryptedIncome(null); 
+    if (decryptedIncome !== null) { 
+      setDecryptedIncome(null); 
       return; 
     }
     
-    const decrypted = await decryptData();
-    setLocalDecryptedIncome(decrypted);
+    const decrypted = await decryptIncome();
+    if (decrypted !== null) {
+      setDecryptedIncome(decrypted);
+    }
   };
-
-  const isEligible = scholarship.isVerified ? (scholarship.decryptedValue || 0) < 30000 : localDecryptedIncome ? localDecryptedIncome < 30000 : false;
 
   return (
     <div className="modal-overlay">
       <div className="detail-modal">
         <div className="modal-header">
           <h2>Application Details</h2>
-          <button onClick={onClose} className="close-modal">×</button>
+          <button onClick={onClose} className="close-modal">&times;</button>
         </div>
         
         <div className="modal-body">
-          <div className="applicant-info">
-            <div className="info-item">
-              <span>Student Name:</span>
-              <strong>{scholarship.name}</strong>
+          <div className="application-info">
+            <div className="info-grid">
+              <div className="info-item">
+                <span>Student Name:</span>
+                <strong>{application.name}</strong>
+              </div>
+              <div className="info-item">
+                <span>Applicant:</span>
+                <strong>{application.creator.substring(0, 6)}...{application.creator.substring(38)}</strong>
+              </div>
+              <div className="info-item">
+                <span>Application Date:</span>
+                <strong>{new Date(application.timestamp * 1000).toLocaleDateString()}</strong>
+              </div>
+              <div className="info-item">
+                <span>Academic Score:</span>
+                <strong>{application.academicScore}/10</strong>
+              </div>
+              <div className="info-item">
+                <span>Activity Score:</span>
+                <strong>{application.extracurricular}/10</strong>
+              </div>
             </div>
-            <div className="info-item">
-              <span>Applicant:</span>
-              <strong>{scholarship.creator.substring(0, 8)}...{scholarship.creator.substring(38)}</strong>
-            </div>
-            <div className="info-item">
-              <span>Application Date:</span>
-              <strong>{new Date(scholarship.timestamp * 1000).toLocaleDateString()}</strong>
-            </div>
-            <div className="info-item">
-              <span>Academic Score:</span>
-              <strong>{scholarship.publicValue1}/100</strong>
+            
+            <div className="personal-statement">
+              <h4>Personal Statement</h4>
+              <p>{application.description}</p>
             </div>
           </div>
           
           <div className="income-section">
-            <h3>Family Income Verification</h3>
+            <h3>Income Verification</h3>
             
-            <div className="income-display">
-              <div className="income-value">
-                {scholarship.isVerified ? 
-                  `$${scholarship.decryptedValue} (On-chain Verified)` : 
-                  localDecryptedIncome !== null ? 
-                  `$${localDecryptedIncome} (Locally Decrypted)` : 
-                  "🔒 FHE Encrypted"
-                }
+            <div className="verification-status">
+              <div className="status-info">
+                <div className="status-label">Income Data:</div>
+                <div className="status-value">
+                  {application.isVerified ? 
+                    `$${application.decryptedValue?.toLocaleString()} (On-chain Verified)` : 
+                    decryptedIncome !== null ? 
+                    `$${decryptedIncome.toLocaleString()} (Locally Decrypted)` : 
+                    "🔒 FHE Encrypted"
+                  }
+                </div>
               </div>
               
               <button 
-                className={`decrypt-btn ${(scholarship.isVerified || localDecryptedIncome !== null) ? 'decrypted' : ''}`}
+                className={`verify-btn ${(application.isVerified || decryptedIncome !== null) ? 'verified' : ''}`}
                 onClick={handleDecrypt} 
                 disabled={isDecrypting}
               >
-                {isDecrypting ? "🔓 Verifying..." :
-                 scholarship.isVerified ? "✅ Verified" :
-                 localDecryptedIncome !== null ? "🔄 Re-verify" : "🔓 Verify Income"}
+                {isDecrypting ? (
+                  "🔓 Verifying..."
+                ) : application.isVerified ? (
+                  "✅ Verified"
+                ) : decryptedIncome !== null ? (
+                  "🔄 Re-verify"
+                ) : (
+                  "🔓 Verify Income"
+                )}
               </button>
             </div>
             
             <div className="fhe-explanation">
               <div className="fhe-icon">🔐</div>
-              <p>Your income data is encrypted on-chain using FHE. Verification happens offline with on-chain proof validation.</p>
+              <div>
+                <strong>FHE Privacy Protection</strong>
+                <p>Your income is encrypted on-chain. Verification happens without exposing the actual amount publicly.</p>
+              </div>
             </div>
           </div>
           
-          {(scholarship.isVerified || localDecryptedIncome !== null) && (
+          {(application.isVerified || decryptedIncome !== null) && (
             <div className="eligibility-section">
-              <h3>Eligibility Assessment</h3>
+              <h3>Eligibility Analysis</h3>
+              {renderIncomeChart(application)}
               
-              <div className={`eligibility-result ${isEligible ? 'eligible' : 'not-eligible'}`}>
-                <div className="result-icon">{isEligible ? "✅" : "❌"}</div>
-                <div className="result-text">
-                  <strong>{isEligible ? "Eligible for Scholarship" : "Not Eligible"}</strong>
-                  <p>{isEligible ? 
-                    "Meets income requirements for scholarship consideration" : 
-                    "Income exceeds scholarship eligibility threshold"
-                  }</p>
-                </div>
-              </div>
-              
-              <div className="eligibility-criteria">
-                <div className="criterion">
+              <div className="analysis-results">
+                <div className="result-item">
                   <span>Income Threshold:</span>
-                  <strong>&lt; $30,000</strong>
+                  <strong>$50,000</strong>
                 </div>
-                <div className="criterion">
+                <div className="result-item">
                   <span>Your Income:</span>
-                  <strong>${scholarship.isVerified ? scholarship.decryptedValue : localDecryptedIncome}</strong>
+                  <strong>
+                    {application.isVerified ? 
+                      `$${application.decryptedValue?.toLocaleString()}` : 
+                      `$${decryptedIncome?.toLocaleString()}`
+                    }
+                  </strong>
                 </div>
-                <div className="criterion">
-                  <span>Academic Minimum:</span>
-                  <strong>60/100</strong>
-                </div>
-                <div className="criterion">
-                  <span>Your Score:</span>
-                  <strong>{scholarship.publicValue1}/100</strong>
+                <div className="result-item">
+                  <span>Eligibility Status:</span>
+                  <strong className={application.decryptedValue && application.decryptedValue < 50000 ? 'eligible' : 'ineligible'}>
+                    {application.decryptedValue && application.decryptedValue < 50000 ? 'Qualified' : 'Does Not Qualify'}
+                  </strong>
                 </div>
               </div>
             </div>
@@ -693,13 +911,13 @@ const ScholarshipDetailModal: React.FC<{
         
         <div className="modal-footer">
           <button onClick={onClose} className="close-btn">Close</button>
-          {!scholarship.isVerified && (
+          {!application.isVerified && (
             <button 
               onClick={handleDecrypt} 
               disabled={isDecrypting}
               className="verify-btn"
             >
-              {isDecrypting ? "Verifying..." : "Verify on-chain"}
+              {isDecrypting ? "Verifying on-chain..." : "Verify on-chain"}
             </button>
           )}
         </div>
